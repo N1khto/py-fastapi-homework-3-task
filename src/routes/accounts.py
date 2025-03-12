@@ -1,18 +1,16 @@
 from datetime import datetime, timezone
 from typing import cast
 
-from fastapi import APIRouter, Depends, status, HTTPException
-from sqlalchemy import select, delete
-from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session, joinedload
 
 from config import get_jwt_auth_manager, get_settings, BaseAppSettings
 from database import (
     get_db,
     UserModel,
     UserGroupModel,
-    UserGroupEnum,
     ActivationTokenModel,
     PasswordResetTokenModel,
     RefreshTokenModel
@@ -23,7 +21,6 @@ from schemas.accounts import UserRegistrationResponseSchema, UserRegistrationReq
     UserLoginResponseSchema, UserLoginRequestSchema, TokenRefreshRequestSchema, TokenRefreshResponseSchema
 from security.interfaces import JWTAuthManagerInterface
 from security.passwords import hash_password
-from security.utils import generate_secure_token
 
 router = APIRouter()
 
@@ -77,7 +74,9 @@ async def activate(user: UserActivationRequestSchema, db: AsyncSession = Depends
     activating_token_stmt = select(ActivationTokenModel).where(ActivationTokenModel.user_id == db_user.id)
     activating_token_result = await db.execute(activating_token_stmt)
     activating_token = activating_token_result.scalars().first()
-    if not activating_token or activating_token.expires_at < datetime.now():
+    if not activating_token or cast(
+            datetime, activating_token.expires_at
+    ).replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
         raise HTTPException(status_code=400, detail="Invalid or expired activation token.")
     if db_user.is_active:
         raise HTTPException(status_code=400, detail="User account is already active.")
@@ -127,7 +126,9 @@ async def reset_password_complete(user: PasswordResetCompleteRequestSchema, db: 
         )
         password_reset_token_result = await db.execute(password_reset_token_stmt)
         password_reset_token = password_reset_token_result.scalars().first()
-        if password_reset_token.token != user.token or password_reset_token.expires_at < datetime.now():
+        if password_reset_token.token != user.token or cast(
+                datetime, password_reset_token.expires_at
+        ).replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
             await db.delete(password_reset_token)
             await db.commit()
             raise HTTPException(status_code=400, detail="Invalid email or token.")
